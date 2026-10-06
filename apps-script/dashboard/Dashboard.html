@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #F4F7FA;   /* graph paper */
+    --grid: #DCE6F0;
+    --sheet: #FFFFFF;
+    --ink: #1A2B44;     /* pen */
+    --pencil: #5E6E82;
+    --marker: #FFE347;  /* highlighter: the one loud thing on the page */
+    --ok: #2F7D57;
+    --alert: #B8402F;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    color: var(--ink);
+    background-color: var(--paper);
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 24px 24px;
+    font: 16px/1.5 'Atkinson Hyperlegible', system-ui, sans-serif;
+  }
+  main { max-width: 1040px; margin: 0 auto; padding: 24px 20px 48px; }
+
+  .top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px 24px; }
+  .brand { margin: 0; font-weight: 700; }
+  .station { margin: 0; color: var(--pencil); }
+  .station .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; background: var(--pencil); }
+  .station.online .dot { background: var(--ok); }
+  .station.offline .dot { background: var(--alert); }
+
+  .hero { margin: 40px 0 24px; }
+  .hero h1 { margin: 0; font-size: clamp(2.2rem, 6vw, 3.4rem); line-height: 1.05; font-weight: 700; letter-spacing: -0.01em; }
+  .hero p { margin: 8px 0 0; color: var(--pencil); font-size: 1.125rem; }
+  #rive { display: block; width: 100%; max-width: 480px; margin-top: 16px; }
+  #rive[hidden], [hidden] { display: none; }
+
+  .search { display: block; margin: 0 0 20px; max-width: 420px; }
+  .search span { display: block; font-weight: 700; margin-bottom: 4px; }
+  .search input {
+    width: 100%; padding: 10px 12px; font: inherit; color: var(--ink);
+    background: var(--sheet); border: 2px solid var(--ink); border-radius: 4px;
+  }
+  .search input:focus-visible { outline: 3px solid var(--marker); outline-offset: 2px; }
+
+  .cols { display: grid; grid-template-columns: 1.3fr 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
+
+  .sheet { background: var(--sheet); border: 1px solid var(--grid); border-radius: 2px; padding: 16px 20px 8px; }
+  .sheet h2 { margin: 0 0 8px; font-size: 1.25rem; }
+  .rows { list-style: none; margin: 0; padding: 0; }
+  .row { display: grid; gap: 2px 16px; padding: 10px 0; border-top: 1px solid var(--grid); }
+  .row:first-child { border-top: 0; }
+  .out .row { grid-template-columns: 1fr auto; }
+  .out .who { grid-column: 1; color: var(--pencil); }
+  .out .when { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--pencil); white-space: nowrap; }
+  .recent .row { grid-template-columns: 5.5rem 1fr; }
+  .recent .when { color: var(--pencil); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .recent .cls { grid-column: 2; color: var(--pencil); font-size: 0.9375rem; }
+  .empty { padding: 12px 0 16px; color: var(--pencil); }
+
+  mark {
+    color: inherit; font-weight: 700; padding: 0 4px; margin: 0 -4px;
+    background-image: linear-gradient(var(--marker), var(--marker));
+    background-repeat: no-repeat; background-size: 100% 100%; background-color: transparent;
+    border-radius: 3px 8px 4px 10px;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .fresh mark { animation: swipe 600ms ease-out both; }
+    @keyframes swipe { from { background-size: 0% 100%; } to { background-size: 100% 100%; } }
+  }
+
+  .health { display: flex; flex-wrap: wrap; gap: 8px 28px; margin-top: 28px; color: var(--pencil); }
+  .health b { color: var(--ink); font-weight: 700; }
+  .error { margin: 16px 0 0; color: var(--alert); font-weight: 700; }
+</style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <p class="brand">Equipment check-in</p>
+    <p id="station" class="station"><span class="dot"></span>Checking the station</p>
+  </header>
+
+  <section class="hero" aria-live="polite">
+    <h1 id="headline">Loading</h1>
+    <p id="subline"></p>
+    <canvas id="rive" width="960" height="360" hidden></canvas>
+    <p id="error" class="error" hidden></p>
+  </section>
+
+  <label class="search">
+    <span>Find a person or item</span>
+    <input id="q" type="search" placeholder="Try a name, class or item" autocomplete="off">
+  </label>
+
+  <div class="cols">
+    <section class="sheet out"><h2>Out now</h2><ol id="out" class="rows"></ol></section>
+    <section class="sheet recent"><h2>Recent activity</h2><ol id="recent" class="rows"></ol></section>
+  </div>
+
+  <section id="health" class="health" aria-label="Station health"></section>
+</main>
+
+<script>
+  // Optional Rive animation: paste a .riv link (see README) to turn it on.
+  // Expected state machine "Dashboard" with inputs: outCount (number), heapPct (number), rssi (number), scan (trigger).
+  const RIV_URL = '';
+
+  const $ = id => document.getElementById(id);
+  let data = null;
+  let seenOut = null;          // barcodes out on the previous refresh
+  let seenLogCount = null;
+  let rive = null, riveInputs = {};
+
+  function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+
+  function ago(iso) {
+    if (!iso) return '';
+    const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.floor(s / 60) + ' min ago';
+    if (s < 86400) return Math.floor(s / 3600) + ' h ago';
+    return new Date(iso).toLocaleDateString();
+  }
+
+  function clock(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const today = new Date().toDateString() === d.toDateString();
+    return today ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                 : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  }
+
+  function matches(q, ...fields) { return !q || fields.some(f => String(f || '').toLowerCase().includes(q)); }
+
+  function render() {
+    if (!data) return;
+    const q = $('q').value.trim().toLowerCase();
+    const outNow = data.out;
+
+    const n = outNow.length;
+    $('headline').textContent = n === 0 ? 'Everything is checked in' : n === 1 ? '1 item is out' : n + ' items are out';
+    $('subline').textContent = data.totalItems ? `of ${data.totalItems} items in the sheet` : 'Add items to the Items tab to get started';
+
+    const outRows = outNow.filter(it => matches(q, it.name, it.holder, it.barcode));
+    $('out').innerHTML = outRows.length
+      ? outRows.map(it => `
+          <li class="row${seenOut && !seenOut.has(it.barcode) ? ' fresh' : ''}">
+            <span class="item"><mark>${esc(it.name)}</mark></span>
+            <span class="who">${esc(it.holder || 'Unknown')}</span>
+            <span class="when">${esc(ago(it.updated))}</span>
+          </li>`).join('')
+      : `<li class="empty">${q ? 'Nothing out matches that search.' : 'Nothing is out right now.'}</li>`;
+
+    const recentRows = data.recent.filter(r => matches(q, r.item, r.person, r.cls, r.barcode));
+    $('recent').innerHTML = recentRows.length
+      ? recentRows.map(r => `
+          <li class="row">
+            <span class="when">${esc(clock(r.time))}</span>
+            <span class="what">${esc(r.person || 'Someone')} ${r.action === 'checkout' ? 'checked out' : 'checked in'} ${esc(r.item)}</span>
+            <span class="cls">${esc(r.cls)}</span>
+          </li>`).join('')
+      : `<li class="empty">${q ? 'No activity matches that search.' : 'Scans will show up here.'}</li>`;
+
+    renderStation(data.station);
+    seenOut = new Set(outNow.map(it => it.barcode));
+  }
+
+  function renderStation(s) {
+    const el = $('station');
+    if (!s) {
+      el.className = 'station';
+      el.innerHTML = '<span class="dot"></span>Station hasn\'t reported yet';
+      $('health').innerHTML = '';
+      return;
+    }
+    const ageSec = (Date.now() - new Date(s.Timestamp).getTime()) / 1000;
+    const online = ageSec < 180;                       // it reports every minute
+    el.className = 'station ' + (online ? 'online' : 'offline');
+    el.innerHTML = `<span class="dot"></span>${online ? 'Station online' : 'Station offline'}, last report ${esc(ago(s.Timestamp))}`;
+
+    const kb = v => Math.round(Number(v || 0) / 1024);
+    const up = Number(s.uptime_s || 0);
+    const upText = up >= 86400 ? Math.floor(up / 86400) + ' d' : up >= 3600 ? Math.floor(up / 3600) + ' h' : Math.floor(up / 60) + ' min';
+    $('health').innerHTML = [
+      ['Memory free', kb(s.heap_free) + ' KB'],
+      ['Wi-Fi', (s.rssi || '?') + ' dBm'],
+      ['Waiting to upload', s.pending === '' ? '0' : s.pending],
+      ['Running for', upText],
+      ['Last restart', String(s.reset_reason || '').replace('_', ' ')],
+    ].map(([k, v]) => `<span>${esc(k)} <b>${esc(v)}</b></span>`).join('');
+
+    if (riveInputs.heapPct) riveInputs.heapPct.value = 100 * Number(s.heap_free) / Number(s.heap_total || 1);
+    if (riveInputs.rssi) riveInputs.rssi.value = Number(s.rssi || 0);
+  }
+
+  function refresh() {
+    google.script.run
+      .withSuccessHandler(d => {
+        const newActivity = seenLogCount !== null && d.logCount > seenLogCount;
+        seenLogCount = d.logCount;
+        data = d;
+        $('error').hidden = true;
+        render();
+        if (riveInputs.outCount) riveInputs.outCount.value = d.out.length;
+        if (newActivity && riveInputs.scan) riveInputs.scan.fire();
+      })
+      .withFailureHandler(err => {
+        $('error').hidden = false;
+        $('error').textContent = "Couldn't reach the sheet (" + (err && err.message ? err.message : 'unknown error') + '). Retrying in 10 seconds.';
+      })
+      .getDashboard();
+  }
+
+  function startRive() {
+    if (!RIV_URL) return;
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/@rive-app/canvas@2';
+    s.onload = () => {
+      const canvas = $('rive');
+      canvas.hidden = false;
+      rive = new window.rive.Rive({
+        src: RIV_URL, canvas, stateMachines: 'Dashboard', autoplay: true,
+        onLoad: () => {
+          rive.resizeDrawingSurfaceToCanvas();
+          for (const input of rive.stateMachineInputs('Dashboard')) riveInputs[input.name] = input;
+        },
+      });
+    };
+    document.head.appendChild(s);
+  }
+
+  $('q').addEventListener('input', render);
+  startRive();
+  refresh();
+  setInterval(refresh, 10000);
+</script>
+</body>
+</html>
