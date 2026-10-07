@@ -115,6 +115,10 @@ void build(lv_obj_t* scr) {
   lv_obj_center(g_tick);
   text(toggle, "Check Into Cart", F_BODY, WHITE, 77, 9);
 
+  // Check In fades when there's nothing to return. A white copy of its shape underneath
+  // keeps the cart pill's hidden end from showing through, so it fades like Log In does.
+  const int32_t r = BIG_BUTTON_H / 2;
+  rect(scr, -r, BIG_BUTTON_Y, 190 + r, BIG_BUTTON_H, WHITE, r);
   g_checkIn = edgeButton(scr, "Check In", BIG_BUTTON_Y, 190, BIG_BUTTON_H, RED, F_BIG, onCheckIn);
 
   reset();

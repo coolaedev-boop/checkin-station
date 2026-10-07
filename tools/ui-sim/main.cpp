@@ -291,6 +291,13 @@ int main(int argc, char** argv) {
          "Check In returns all three under Dana / Film Club");
   Item it;
   expect(Inventory::findItem("100004", it) && !it.checkedOut, "the Zoom recorder is back in");
+  bool bigButtonDisabled = false;                   // the title and nav pill also read "Check In"
+  for (lv_obj_t* o : everything())
+    if (lv_obj_has_class(o, &lv_label_class) && visible(o) && std::string(lv_label_get_text(o)) == "Check In")
+      if (lv_obj_t* b = clickableOf(o))
+        if (lv_obj_get_y(b) == 226) bigButtonDisabled = lv_obj_has_state(b, LV_STATE_DISABLED);
+  expect(bigButtonDisabled, "nothing left to return: Check In is disabled");
+  shot("2c_check_in_nothing_to_return");
 
   // ---- Settings: PIN, main, Bluetooth, Wi-Fi --------------------------------------------
   tap("Settings");
