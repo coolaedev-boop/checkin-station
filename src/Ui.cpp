@@ -7,6 +7,7 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 #include <lvgl.h>
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -17,23 +18,31 @@ struct DropdownPair {
 };
 
 // ---- Screen state -------------------------------------------------------------
-lv_obj_t*    g_tabview = nullptr;
-DropdownPair g_inDd, g_outDd;
+lv_obj_t*          g_tabview = nullptr;
+DropdownPair       g_inDd, g_outDd;
+constexpr uint32_t TAB_CHECK_IN  = 0;        // the order Ui::begin() adds the tabs in
+constexpr uint32_t TAB_CHECK_OUT = 1;
+constexpr int32_t  WHO_COLUMN_W  = 176;      // class/name/buttons column on both tabs. Wider squeezes the
+                                             // item name on Check in ("Chromebook" needs 147 px at 22 px)
 
-// Check in
-lv_obj_t*   g_img = nullptr;
-lv_obj_t*   g_lblItem = nullptr;
-lv_obj_t*   g_lblCode = nullptr;
-lv_obj_t*   g_lblInMsg = nullptr;
-lv_obj_t*   g_btnIn = nullptr;
-std::string g_scanned;                       // barcode waiting to be checked in
+// Check in: scans pile up in a list, then one tap checks them all in under one person
+lv_obj_t*                g_img = nullptr;
+lv_obj_t*                g_lblItem = nullptr;
+lv_obj_t*                g_lblCode = nullptr;
+lv_obj_t*                g_listIn = nullptr;
+lv_obj_t*                g_lblInMsg = nullptr;
+lv_obj_t*                g_btnIn = nullptr;
+lv_obj_t*                g_btnInClear = nullptr;
+std::vector<std::string> g_inBatch;          // barcodes waiting to be checked in, in scan order
+bool                     g_inListStale = false;   // rebuild the list on the next update()
 
-// Check out
-lv_obj_t*         g_listOut = nullptr;
-lv_obj_t*         g_lblOutMsg = nullptr;
-lv_obj_t*         g_btnOut = nullptr;
-std::vector<Item> g_listItems;               // what the list is currently showing
-std::string       g_selectedBarcode;
+// Check out: tap or scan any number of items, then check them all out to one person
+lv_obj_t*                g_listOut = nullptr;
+lv_obj_t*                g_lblOutMsg = nullptr;
+lv_obj_t*                g_btnOut = nullptr;
+lv_obj_t*                g_btnOutClear = nullptr;
+std::vector<Item>        g_listItems;        // what the list is currently showing
+std::vector<std::string> g_outPicked;        // barcodes selected for check-out, in the order picked
 
 // System
 lv_obj_t*                g_lblBle = nullptr;
@@ -119,9 +128,33 @@ void setEnabled(lv_obj_t* obj, bool on) {
   else    lv_obj_add_state(obj, LV_STATE_DISABLED);
 }
 
+void setTextIfChanged(lv_obj_t* label, const char* text) {   // no redraw when nothing changed
+  if (strcmp(lv_label_get_text(label), text) != 0) lv_label_set_text(label, text);
+}
+
+bool contains(const std::vector<std::string>& list, const std::string& s) {
+  return std::find(list.begin(), list.end(), s) != list.end();
+}
+
+std::string itemCount(size_t n) { return n == 1 ? "1 item" : std::to_string(n) + " items"; }
+
+std::string itemName(const std::string& barcode) {
+  Item item;
+  return Inventory::findItem(barcode, item) ? item.name : "Unknown item";
+}
+
+void setButtonText(lv_obj_t* btn, const std::string& text) { setTextIfChanged(lv_obj_get_child(btn, 0), text.c_str()); }
+
 void updateButtons() {
-  setEnabled(g_btnIn, !g_scanned.empty() && pairComplete(g_inDd));
-  setEnabled(g_btnOut, !g_selectedBarcode.empty() && pairComplete(g_outDd));
+  setEnabled(g_btnIn, !g_inBatch.empty() && pairComplete(g_inDd));
+  setEnabled(g_btnInClear, !g_inBatch.empty());
+  setButtonText(g_btnIn, g_inBatch.empty() ? LV_SYMBOL_DOWNLOAD " Check in"
+                                           : LV_SYMBOL_DOWNLOAD " Check in " + itemCount(g_inBatch.size()));
+
+  setEnabled(g_btnOut, !g_outPicked.empty() && pairComplete(g_outDd));
+  setEnabled(g_btnOutClear, !g_outPicked.empty());
+  setButtonText(g_btnOut, g_outPicked.empty() ? LV_SYMBOL_UPLOAD " Check out"
+                                              : LV_SYMBOL_UPLOAD " Check out " + itemCount(g_outPicked.size()));
 }
 
 std::string formatDuration(uint32_t sec) {
@@ -193,8 +226,10 @@ lv_obj_t* makeFixedButton(lv_obj_t* parent, const char* text, int32_t width, lv_
   return btn;
 }
 
-void setTextIfChanged(lv_obj_t* label, const char* text) {   // no redraw when nothing changed
-  if (strcmp(lv_label_get_text(label), text) != 0) lv_label_set_text(label, text);
+lv_obj_t* makeSecondaryButton(lv_obj_t* parent, const char* text, lv_event_cb_t onClick) {
+  lv_obj_t* btn = makeButton(parent, text, onClick);
+  lv_obj_set_style_bg_color(btn, lv_palette_darken(LV_PALETTE_GREY, 3), 0);   // grey, so it isn't mistaken for the main action
+  return btn;
 }
 
 // ---- Wi-Fi panels ----------------------------------------------------------------
@@ -472,91 +507,194 @@ void refreshPair(DropdownPair& pair) {                 // roster changed after a
 }
 
 // ---- Check in tab --------------------------------------------------------------
+std::string batchRowText(const std::string& barcode) {
+  Item item;
+  if (!Inventory::findItem(barcode, item)) return "Unknown item " + barcode;   // several unknowns would look alike
+  return item.checkedOut ? item.name : item.name + "  (already in)";
+}
+
+void onBatchRowTapped(lv_event_t* e) {                 // tap a row to take it back off the list
+  const size_t idx = reinterpret_cast<uintptr_t>(lv_event_get_user_data(e));
+  if (idx >= g_inBatch.size()) return;
+  g_inBatch.erase(g_inBatch.begin() + static_cast<std::ptrdiff_t>(idx));
+  lv_label_set_text(g_lblInMsg, "");
+  g_inListStale = true;                                // not now: the list would delete the row inside its own event
+  updateButtons();
+}
+
+void rebuildBatchList(bool showNewest) {
+  const int32_t scrollY = lv_obj_get_scroll_y(g_listIn);
+  lv_obj_clean(g_listIn);
+  for (size_t i = 0; i < g_inBatch.size(); ++i) {
+    lv_obj_t* btn = lv_list_add_button(g_listIn, LV_SYMBOL_CLOSE, batchRowText(g_inBatch[i]).c_str());
+    lv_obj_add_event_cb(btn, onBatchRowTapped, LV_EVENT_CLICKED, reinterpret_cast<void*>(i));
+  }
+  if (g_inBatch.empty()) lv_list_add_text(g_listIn, "Scanned items show up here");
+  lv_obj_update_layout(g_listIn);
+  if (showNewest && !g_inBatch.empty()) lv_obj_scroll_to_view(lv_obj_get_child(g_listIn, -1), LV_ANIM_OFF);
+  else                                  lv_obj_scroll_to_y(g_listIn, scrollY, LV_ANIM_OFF);
+  g_inListStale = false;
+  updateButtons();
+}
+
 void showScanned(const std::string& barcode) {
-  g_scanned = barcode;
   Item item;
   const bool known = Inventory::findItem(barcode, item);
   lv_label_set_text(g_lblItem, known ? item.name.c_str() : "Unknown item");
   lv_label_set_text(g_lblCode, barcode.c_str());
-  lv_label_set_text(g_lblInMsg, known && !item.checkedOut ? "Already checked in" : "");
+
+  if (contains(g_inBatch, barcode)) {
+    lv_label_set_text(g_lblInMsg, "Already in the list");
+  } else {
+    g_inBatch.push_back(barcode);
+    lv_label_set_text(g_lblInMsg, known && !item.checkedOut ? "Already checked in" : "");
+  }
+  rebuildBatchList(true);
 
   const std::string file = known ? "/items/" + barcode + ".jpg" : "/items/unknown_item.jpg";
   if (LittleFS.exists(file.c_str())) lv_image_set_src(g_img, ("L:" + file).c_str());
   else                               lv_image_set_src(g_img, LV_SYMBOL_IMAGE);
 
   showOnly(nullptr);                                   // close the Wi-Fi screens if they're open
-  lv_tabview_set_active(g_tabview, 0, LV_ANIM_OFF);    // jump to Check in on every scan
-  updateButtons();
+  lv_tabview_set_active(g_tabview, TAB_CHECK_IN, LV_ANIM_OFF);
 }
 
 void onCheckIn(lv_event_t*) {
-  Inventory::checkIn(g_scanned, selectedText(g_inDd.cls), selectedText(g_inDd.person));
-  const std::string msg = std::string(LV_SYMBOL_OK " Checked in ") + lv_label_get_text(g_lblItem);
+  if (g_inBatch.empty()) return;
+  const std::string cls = selectedText(g_inDd.cls), person = selectedText(g_inDd.person);
+  const std::string what = g_inBatch.size() == 1 ? itemName(g_inBatch[0]) : itemCount(g_inBatch.size());
+  for (const std::string& barcode : g_inBatch) Inventory::checkIn(barcode, cls, person);
+  const std::string msg = LV_SYMBOL_OK " Checked in " + what + " from " + person;
   lv_label_set_text(g_lblInMsg, msg.c_str());
-  g_scanned.clear();                                   // dropdowns stay picked for the next scan
-  updateButtons();
+  g_inBatch.clear();                                   // dropdowns stay picked for the next batch
+  rebuildBatchList(false);
+}
+
+void onClearBatch(lv_event_t*) {
+  g_inBatch.clear();
+  lv_label_set_text(g_lblInMsg, "");
+  rebuildBatchList(false);
 }
 
 void buildCheckInTab(lv_obj_t* tab) {
   setupTab(tab, LV_FLEX_FLOW_ROW);
 
-  lv_obj_t* left = makeColumn(tab, 150);
-  g_img = lv_image_create(left);
+  // Left: the last scan on top, everything scanned so far below it
+  lv_obj_t* left    = makeColumn(tab, 0);
+  lv_obj_t* preview = makeContainer(left, LV_FLEX_FLOW_ROW);
+  lv_obj_set_size(preview, lv_pct(100), 120);
+  g_img = lv_image_create(preview);
   lv_obj_set_size(g_img, 120, 120);
   lv_image_set_src(g_img, LV_SYMBOL_IMAGE);
-  g_lblItem = makeLabel(left, "Scan an item");
+  lv_obj_t* about = makeColumn(preview, 0);
+  g_lblItem = makeLabel(about, "Scan items");
   lv_obj_set_style_text_font(g_lblItem, &lv_font_montserrat_22, 0);
-  g_lblCode = makeLabel(left, "");
+  g_lblCode = makeLabel(about, "");
   lv_obj_set_style_text_color(g_lblCode, lv_palette_main(LV_PALETTE_GREY), 0);
 
-  lv_obj_t* right = makeColumn(tab, 0);
+  g_listIn = lv_list_create(left);
+  lv_obj_set_width(g_listIn, lv_pct(100));
+  lv_obj_set_flex_grow(g_listIn, 1);
+
+  // Right: who's returning them, laid out like the Check out tab
+  lv_obj_t* right = makeColumn(tab, WHO_COLUMN_W);
   makeDropdownPair(right, &g_inDd);
-  g_btnIn    = makeButton(right, LV_SYMBOL_DOWNLOAD " Check in", onCheckIn);
-  g_lblInMsg = makeLabel(right, "");
+  g_btnIn      = makeButton(right, LV_SYMBOL_DOWNLOAD " Check in", onCheckIn);
+  g_btnInClear = makeSecondaryButton(right, "Clear list", onClearBatch);
+  g_lblInMsg   = makeLabel(right, "");
 }
 
 // ---- Check out tab -------------------------------------------------------------
-void onItemPicked(lv_event_t* e) {
-  auto* picked = static_cast<lv_obj_t*>(lv_event_get_target(e));
+void onItemPicked(lv_event_t* e) {                     // each tap toggles one item
+  auto* row = static_cast<lv_obj_t*>(lv_event_get_target(e));
   const size_t idx = reinterpret_cast<uintptr_t>(lv_event_get_user_data(e));
   if (idx >= g_listItems.size()) return;
-  g_selectedBarcode = g_listItems[idx].barcode;
-  for (uint32_t i = 0; i < lv_obj_get_child_count(g_listOut); ++i) {   // radio-style highlight
-    lv_obj_t* child = lv_obj_get_child(g_listOut, i);
-    if (child == picked) lv_obj_add_state(child, LV_STATE_CHECKED);
-    else                 lv_obj_remove_state(child, LV_STATE_CHECKED);
+  const auto it = std::find(g_outPicked.begin(), g_outPicked.end(), g_listItems[idx].barcode);
+  if (it == g_outPicked.end()) {
+    g_outPicked.push_back(g_listItems[idx].barcode);
+    lv_obj_add_state(row, LV_STATE_CHECKED);
+  } else {
+    g_outPicked.erase(it);
+    lv_obj_remove_state(row, LV_STATE_CHECKED);
   }
   lv_label_set_text(g_lblOutMsg, "");
   updateButtons();
 }
 
+// A scan while Check out is showing selects that item. False if it isn't in the
+// list (already out, or unknown), so the scan goes to Check in instead.
+bool selectScanned(const std::string& barcode) {
+  for (size_t i = 0; i < g_listItems.size(); ++i) {
+    if (g_listItems[i].barcode != barcode) continue;
+    const bool already = contains(g_outPicked, barcode);
+    if (!already) g_outPicked.push_back(barcode);
+    lv_obj_t* row = lv_obj_get_child(g_listOut, static_cast<int32_t>(i));
+    lv_obj_add_state(row, LV_STATE_CHECKED);
+    lv_obj_scroll_to_view(row, LV_ANIM_ON);
+    const std::string msg = already ? g_listItems[i].name + " is already selected" : "Selected " + g_listItems[i].name;
+    lv_label_set_text(g_lblOutMsg, msg.c_str());
+    updateButtons();
+    return true;
+  }
+  return false;
+}
+
+void unselectAll() {
+  g_outPicked.clear();
+  for (uint32_t i = 0; i < lv_obj_get_child_count(g_listOut); ++i)
+    lv_obj_remove_state(lv_obj_get_child(g_listOut, i), LV_STATE_CHECKED);
+  updateButtons();
+}
+
 void rebuildAvailableList() {
+  const int32_t scrollY = lv_obj_get_scroll_y(g_listOut);
   g_listItems = Inventory::availableItems();
+
+  std::vector<std::string> kept;                       // drop picks that aren't available any more
+  for (const std::string& code : g_outPicked)
+    for (const Item& item : g_listItems)
+      if (item.barcode == code) {
+        kept.push_back(code);
+        break;
+      }
+  g_outPicked = std::move(kept);
+
   lv_obj_clean(g_listOut);
-  bool stillThere = false;
   for (size_t i = 0; i < g_listItems.size(); ++i) {
     lv_obj_t* btn = lv_list_add_button(g_listOut, nullptr, g_listItems[i].name.c_str());
     styleSelectable(btn);
     lv_obj_add_event_cb(btn, onItemPicked, LV_EVENT_CLICKED, reinterpret_cast<void*>(i));
-    if (g_listItems[i].barcode == g_selectedBarcode) {
-      lv_obj_add_state(btn, LV_STATE_CHECKED);
-      stillThere = true;
-    }
+    if (contains(g_outPicked, g_listItems[i].barcode)) lv_obj_add_state(btn, LV_STATE_CHECKED);
   }
   if (g_listItems.empty()) lv_list_add_text(g_listOut, "Everything is checked out");
-  if (!stillThere) g_selectedBarcode.clear();
+  lv_obj_update_layout(g_listOut);
+  lv_obj_scroll_to_y(g_listOut, scrollY, LV_ANIM_OFF);   // a sync shouldn't lose your place
   updateButtons();
 }
 
 void onCheckOut(lv_event_t*) {
-  Item item;
-  const bool known = Inventory::findItem(g_selectedBarcode, item);
-  const bool ok = Inventory::checkOut(g_selectedBarcode, selectedText(g_outDd.cls), selectedText(g_outDd.person));
-  const std::string msg = ok ? std::string(LV_SYMBOL_OK " Checked out ") + (known ? item.name : "")
-                             : std::string(LV_SYMBOL_WARNING " Already checked out");
+  if (g_outPicked.empty()) return;
+  const std::string cls = selectedText(g_outDd.cls), person = selectedText(g_outDd.person);
+  const std::string onlyName = itemName(g_outPicked[0]);
+  size_t done = 0;
+  for (const std::string& barcode : g_outPicked)
+    if (Inventory::checkOut(barcode, cls, person)) ++done;
+  const size_t missed = g_outPicked.size() - done;
+
+  std::string msg;
+  if (done == 0) {
+    msg = LV_SYMBOL_WARNING " Already checked out";
+  } else {
+    msg = LV_SYMBOL_OK " Checked out " + (g_outPicked.size() == 1 ? onlyName : itemCount(done)) + " to " + person;
+    if (missed > 0) msg += " (" + std::to_string(missed) + " already out)";
+  }
   lv_label_set_text(g_lblOutMsg, msg.c_str());
-  g_selectedBarcode.clear();                           // list refreshes on the next update()
-  updateButtons();
+  unselectAll();                                       // the list itself refreshes on the next update()
+}
+
+void onUnselectAll(lv_event_t*) {
+  unselectAll();
+  lv_label_set_text(g_lblOutMsg, "");
 }
 
 void buildCheckOutTab(lv_obj_t* tab) {
@@ -566,10 +704,18 @@ void buildCheckOutTab(lv_obj_t* tab) {
   lv_obj_set_height(g_listOut, lv_pct(100));
   lv_obj_set_flex_grow(g_listOut, 1);
 
-  lv_obj_t* right = makeColumn(tab, 200);
+  lv_obj_t* right = makeColumn(tab, WHO_COLUMN_W);
   makeDropdownPair(right, &g_outDd);
-  g_btnOut    = makeButton(right, LV_SYMBOL_UPLOAD " Check out", onCheckOut);
-  g_lblOutMsg = makeLabel(right, "");
+  g_btnOut      = makeButton(right, LV_SYMBOL_UPLOAD " Check out", onCheckOut);
+  g_btnOutClear = makeSecondaryButton(right, "Clear selection", onUnselectAll);
+  g_lblOutMsg   = makeLabel(right, "Tap or scan items to select them");
+}
+
+// Scans go to the Check in list, except on the Check out tab: there, scanning an
+// item that's in selects it. Anything else (already out, unknown) still goes to Check in.
+void handleScan(const std::string& barcode) {
+  if (lv_tabview_get_tab_active(g_tabview) == TAB_CHECK_OUT && selectScanned(barcode)) return;
+  showScanned(barcode);
 }
 
 // ---- System tab ----------------------------------------------------------------
@@ -691,12 +837,12 @@ void Ui::begin() {
   buildSystemTab(lv_tabview_add_tab(g_tabview, "System"));
   buildWifiPanels();                                   // created last so they draw over the tabs
 
-  updateButtons();
+  rebuildBatchList(false);                             // empty-list hint, and sets the buttons
 }
 
 void Ui::update() {
   std::string code;
-  while (Scanner::nextBarcode(code)) showScanned(code);
+  while (Scanner::nextBarcode(code)) handleScan(code);
 
   const uint32_t invRev = Inventory::revision();
   if (invRev != g_seenInventoryRev) {                  // data changed (sync, check-in, check-out)
@@ -704,7 +850,9 @@ void Ui::update() {
     refreshPair(g_inDd);
     refreshPair(g_outDd);
     rebuildAvailableList();
+    g_inListStale = true;                              // an "(already in)" note may be out of date
   }
+  if (g_inListStale) rebuildBatchList(false);
 
   const uint32_t foundRev = Scanner::foundRevision();
   if (foundRev != g_seenFoundRev) {                    // a scanner search finished

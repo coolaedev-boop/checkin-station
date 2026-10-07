@@ -96,15 +96,17 @@ The "revision" numbers are how the screen knows when to redraw without polling e
 
 ## What happens when you check something out
 
-1. You tap an item in the **Check out** list, pick a class and a name, and tap **Check out**.
-2. `Ui` calls `Inventory::checkOut(barcode, class, person)`.
+1. On the **Check out** tab, you select the items. Tap them in the list, or scan them (a scan on this tab selects the item instead of jumping to Check in). Tap a selected item again to unselect it. Then pick a class and a name and tap **Check out N items**.
+2. `Ui` calls `Inventory::checkOut(barcode, class, person)` once per selected item, all under that one person.
 3. `Inventory` marks the item as out immediately and bumps its revision, so the list updates on the next frame even with no Wi-Fi.
 4. `Inventory` calls `Cloud::sendEvent("checkout", ...)`, which drops a JSON event on the upload queue and returns instantly.
 5. The `Cloud` task posts the event to Apps Script. The event only leaves the queue once Apps Script answers `{"ok":true}`. Network trouble retries every 5 s; setup problems (wrong token, deployment not public) retry every 60 s. The System tab says which one it is.
 6. `doPost` in the station script updates the item's row in **Items** and appends a row to **Log**.
 7. Every 5 minutes, once the upload queue is empty, `Cloud` pulls a fresh snapshot from Sheets into `Inventory`. Edits you make directly in the Sheet reach the station that way.
 
-Check-in works the same way, except it starts from a scan: `Scanner` puts the barcode on a queue, `Ui::update()` picks it up, jumps to the **Check in** tab, and shows the item's name and image.
+Each item is still its own event and its own row in **Log**, so a bulk check-out of 5 items uploads 5 events.
+
+Check-in works the same way, except it starts from scans: `Scanner` puts each barcode on a queue, `Ui::update()` picks it up, jumps to the **Check in** tab, shows the item's name and image, and adds it to the list under the image. Scan as many items as you like (scanning one twice adds it once; tap a row to take it off the list), pick the class and name once, and tap **Check in N items**. A scan of an item that's checked out goes to Check in even while the **Check out** tab is open.
 
 ## Setup, in order
 
