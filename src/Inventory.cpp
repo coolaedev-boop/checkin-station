@@ -16,6 +16,7 @@ constexpr const char* CACHE_PATH = "/inventory.json";
 
 std::mutex               g_mutex;
 std::vector<RosterClass> g_roster;
+std::vector<std::string> g_projects;
 std::vector<Item>        g_items;
 std::atomic<uint32_t>    g_revision{0};
 uint32_t                 g_cacheCrc = 0;
@@ -25,8 +26,9 @@ uint32_t crcOf(const String& s) {
 }
 
 // Parse a snapshot from Apps Script:
-// {"ok":true,"roster":[{"class":"Period 1","people":["Ava"]}],
-//  "items":[{"barcode":"0123","name":"TI-84 #1","out":false,"holder":""}]}
+// {"ok":true,"roster":[{"class":"Period 1","people":["Ava"]}],"projects":["Film Club"],
+//  "items":[{"barcode":"0123","name":"TI-84 #1","out":false,"holder":"","desc":"Calculator, TI-84 Plus"}]}
+// "projects" and "desc" are newer; a snapshot or cache without them still parses.
 bool parseSnapshot(const String& json) {
   JsonDocument doc;
   if (deserializeJson(doc, json) || !(doc["ok"] | false)) return false;
@@ -39,6 +41,12 @@ bool parseSnapshot(const String& json) {
     roster.push_back(std::move(rc));
   }
 
+  std::vector<std::string> projects;
+  for (JsonVariant p : doc["projects"].as<JsonArray>()) {
+    std::string name = p | "";
+    if (!name.empty()) projects.push_back(std::move(name));
+  }
+
   std::vector<Item> items;
   for (JsonObject it : doc["items"].as<JsonArray>()) {
     Item item;
@@ -46,13 +54,15 @@ bool parseSnapshot(const String& json) {
     item.name       = it["name"] | "";
     item.checkedOut = it["out"] | false;
     item.holder     = it["holder"] | "";
+    item.description = it["desc"] | "";
     if (!item.barcode.empty()) items.push_back(std::move(item));
   }
 
   {
     std::lock_guard<std::mutex> lock(g_mutex);
-    g_roster = std::move(roster);
-    g_items  = std::move(items);
+    g_roster   = std::move(roster);
+    g_projects = std::move(projects);
+    g_items    = std::move(items);
   }
   ++g_revision;
   return true;
@@ -70,10 +80,11 @@ void saveCache(const String& json) {
 
 void loadDemoData() {
   std::lock_guard<std::mutex> lock(g_mutex);
-  g_roster = {{"Period 1", {"Ava", "Jordan", "Malik"}}, {"Period 2", {"Chris", "Dana"}}};
-  g_items  = {{"012345678905", "TI-84 #1", false, ""},
-              {"012345678912", "TI-84 #2", false, ""},
-              {"036000291452", "Chromebook 7", false, ""}};
+  g_roster   = {{"2A", {"Ava", "Jordan", "Malik"}}, {"2B", {"Chris", "Dana"}}};
+  g_projects = {"Morning Show", "Film Club"};
+  g_items    = {{"012345678905", "TI-84 #1", false, "", "Calculator, TI-84 Plus"},
+                {"012345678912", "TI-84 #2", false, "", "Calculator, TI-84 Plus"},
+                {"036000291452", "Chromebook 7", false, "", "Laptop, Lenovo 100e"}};
 }
 
 Item* findLocked(const std::string& barcode) {  // caller must hold g_mutex
@@ -119,6 +130,11 @@ std::vector<std::string> Inventory::people(const std::string& className) {
   return {};
 }
 
+std::vector<std::string> Inventory::projects() {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  return g_projects;
+}
+
 bool Inventory::findItem(const std::string& barcode, Item& out) {
   std::lock_guard<std::mutex> lock(g_mutex);
   const Item* it = findLocked(barcode);
@@ -143,22 +159,24 @@ std::vector<Item> Inventory::checkedOutItems() {
   return out;
 }
 
-bool Inventory::checkIn(const std::string& barcode, const std::string& className, const std::string& person) {
+bool Inventory::checkIn(const std::string& barcode, const std::string& className, const std::string& person,
+                        const std::string& project) {
   {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (Item* it = findLocked(barcode)) {
       it->checkedOut = false;
       it->holder.clear();
     } else {
-      g_items.push_back({barcode, "Unknown item", false, ""});  // Sheets adds it too; rename it there
+      g_items.push_back({barcode, "Unknown item", false, "", ""});  // Sheets adds it too; rename it there
     }
   }
   ++g_revision;
-  Cloud::sendEvent("checkin", barcode, className, person);
+  Cloud::sendEvent("checkin", barcode, className, person, project);
   return true;
 }
 
-bool Inventory::checkOut(const std::string& barcode, const std::string& className, const std::string& person) {
+bool Inventory::checkOut(const std::string& barcode, const std::string& className, const std::string& person,
+                         const std::string& project) {
   {
     std::lock_guard<std::mutex> lock(g_mutex);
     Item* it = findLocked(barcode);
@@ -167,7 +185,7 @@ bool Inventory::checkOut(const std::string& barcode, const std::string& classNam
     it->holder     = person + " (" + className + ")";
   }
   ++g_revision;
-  Cloud::sendEvent("checkout", barcode, className, person);
+  Cloud::sendEvent("checkout", barcode, className, person, project);
   return true;
 }
 

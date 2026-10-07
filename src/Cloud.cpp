@@ -282,7 +282,7 @@ void Cloud::begin() {                            // call after Network::begin()
 }
 
 void Cloud::sendEvent(const char* action, const std::string& barcode,
-                      const std::string& className, const std::string& person) {
+                      const std::string& className, const std::string& person, const std::string& project) {
   JsonDocument doc;
   doc["token"]   = API_TOKEN;
   doc["type"]    = "event";
@@ -290,6 +290,7 @@ void Cloud::sendEvent(const char* action, const std::string& barcode,
   doc["barcode"] = barcode;
   doc["class"]   = className;
   doc["person"]  = person;
+  doc["project"] = project;
   doc["device"]  = Telemetry::deviceId();
   const time_t t = time(nullptr);
   if (t > 1700000000) doc["ts"] = static_cast<int64_t>(t) * 1000;  // ms since epoch, only if NTP has synced

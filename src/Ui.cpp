@@ -563,7 +563,7 @@ void onCheckIn(lv_event_t*) {
   if (g_inBatch.empty()) return;
   const std::string cls = selectedText(g_inDd.cls), person = selectedText(g_inDd.person);
   const std::string what = g_inBatch.size() == 1 ? itemName(g_inBatch[0]) : itemCount(g_inBatch.size());
-  for (const std::string& barcode : g_inBatch) Inventory::checkIn(barcode, cls, person);
+  for (const std::string& barcode : g_inBatch) Inventory::checkIn(barcode, cls, person, "");
   const std::string msg = LV_SYMBOL_OK " Checked in " + what + " from " + person;
   lv_label_set_text(g_lblInMsg, msg.c_str());
   g_inBatch.clear();                                   // dropdowns stay picked for the next batch
@@ -678,7 +678,7 @@ void onCheckOut(lv_event_t*) {
   const std::string onlyName = itemName(g_outPicked[0]);
   size_t done = 0;
   for (const std::string& barcode : g_outPicked)
-    if (Inventory::checkOut(barcode, cls, person)) ++done;
+    if (Inventory::checkOut(barcode, cls, person, "")) ++done;
   const size_t missed = g_outPicked.size() - done;
 
   std::string msg;

@@ -16,6 +16,7 @@ struct Item {
   std::string name;
   bool        checkedOut = false;
   std::string holder;       // "Ava (Period 1)" while checked out, empty otherwise
+  std::string description;  // short "type, model" line from the Items tab; may be empty
 };
 
 namespace Inventory {
@@ -24,14 +25,17 @@ namespace Inventory {
 
   std::vector<std::string> classes();
   std::vector<std::string> people(const std::string& className);
+  std::vector<std::string> projects();                   // from the Projects tab; empty if there isn't one
   bool                     findItem(const std::string& barcode, Item& out);
   std::vector<Item>        availableItems();             // checked in, so they can be checked out
   std::vector<Item>        checkedOutItems();
 
   // Update local state right away and queue the event for upload to Sheets.
   // checkOut() returns false if the item is unknown or already out.
-  bool checkIn(const std::string& barcode, const std::string& className, const std::string& person);
-  bool checkOut(const std::string& barcode, const std::string& className, const std::string& person);
+  bool checkIn(const std::string& barcode, const std::string& className, const std::string& person,
+               const std::string& project);
+  bool checkOut(const std::string& barcode, const std::string& className, const std::string& person,
+                const std::string& project);
 
   uint32_t revision();                                   // bumps on every change; the UI redraws when it moves
 }

@@ -25,6 +25,11 @@ constexpr uint32_t WIFI_RETRY_MS         = 10 * 1000;      // reconnect attempts
 constexpr uint32_t WIFI_JOIN_TIMEOUT_MS  = 15 * 1000;      // give up on one try at joining a network
 constexpr uint32_t SCANNER_RETRY_MS      = 10 * 1000;      // reconnect attempts to the saved scanner
 constexpr uint32_t DISCOVERY_DURATION_MS = 5 * 1000;       // how long "Find scanners" searches
+constexpr uint32_t SESSION_IDLE_MS       = 3 * 60 * 1000;  // sign out after this long with no touch or scan
+
+// ---- Settings PIN -----------------------------------------------------------
+// 6 digits. Settings (scanner, Wi-Fi, sync) asks for it every time it's opened.
+constexpr const char* SETTINGS_PIN = "000000";
 
 // ---- Display: ST7796S over SPI (match your wiring) ---------------------------
 constexpr int PIN_TFT_SCLK = 12;
