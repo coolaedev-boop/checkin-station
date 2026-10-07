@@ -15,9 +15,11 @@
 #define LV_DEF_REFR_PERIOD 16          // check for redraws every 16 ms (60 FPS ceiling)
 #define LV_USE_OS          LV_OS_NONE  // only the UI loop touches LVGL
 
-#define LV_FONT_MONTSERRAT_16 1
-#define LV_FONT_MONTSERRAT_22 1
-#define LV_FONT_DEFAULT       &lv_font_montserrat_16
+// Lexend, from the design. Generated into src/ui/fonts by tools/make_fonts.ps1.
+// LVGL's own Montserrat fonts aren't used any more.
+#define LV_FONT_MONTSERRAT_14  0
+#define LV_FONT_CUSTOM_DECLARE LV_FONT_DECLARE(lexend_light_13)
+#define LV_FONT_DEFAULT        &lexend_light_13
 
 // Item images: baseline JPEGs read from flash as "L:/items/<barcode>.jpg"
 #define LV_USE_TJPGD 1
