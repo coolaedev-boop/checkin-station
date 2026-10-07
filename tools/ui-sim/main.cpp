@@ -376,6 +376,10 @@ int main(int argc, char** argv) {
   run(100);
   expect(Session::cart().empty() && somewhere("1 item left the cart"), "an item the Sheet says is out leaves the cart");
 
-  printf("\n%d failure(s)\n", g_failures);
+  lv_mem_monitor_t mem;                             // LVGL heap: 1 MB of PSRAM on the board
+  lv_mem_monitor(&mem);
+  printf("\nLVGL memory: %lu KB used at most, of %lu KB\n", (unsigned long)(mem.max_used / 1024),
+         (unsigned long)(mem.total_size / 1024));
+  printf("%d failure(s)\n", g_failures);
   return g_failures ? 1 : 0;
 }
