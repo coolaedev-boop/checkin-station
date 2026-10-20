@@ -13,7 +13,7 @@
 // System tab will say "needs public deployment".
 constexpr const char* WIFI_SSID  = "Guest";          // 2.4 GHz only
 constexpr const char* WIFI_PASS  = "";
-constexpr const char* SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwF5KFPHNB6SFxTc85XYyphoPIbN-hRJtV7aeuvit7ZScbYaUgjaNbEEPGHsj4i7o_K/exec";
+constexpr const char* SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz0VMBOri-BbVOLhVXrL0trRXl6px5YqeryKF8keOPsjdtXQdvFnxs_dqsfPRsQQVFj/exec";
 constexpr const char* API_TOKEN  = "jdiwnu8329rejdowhe92ueiowpqu9e01ue89yru23yy46782ryeho2u8y7382yr7ewy";  // must match TOKEN in Code.gs
 
 // ---- Timing -----------------------------------------------------------------
