@@ -383,7 +383,23 @@ int main(int argc, char** argv) {
   run(100);
   expect(Session::cart().empty() && somewhere("1 item left the cart"), "an item the Sheet says is out leaves the cart");
 
-  lv_mem_monitor_t mem;                             // LVGL heap: 1 MB of PSRAM on the board
+  // ---- Hidden screens catch up when shown; unchanged snapshots do nothing ---------------------
+  std::string roster2 = later;                       // Sign On is hidden while Gia is signed on
+  const std::string gia = R"("people":["Gia"])";
+  roster2.replace(roster2.find(gia), gia.size(), R"("people":["Gia","Zed"])");
+  expect(Inventory::applySnapshot(roster2), "snapshot with a new person parses");
+  run(100);
+  const uint32_t rev = Inventory::revision();
+  expect(Inventory::applySnapshot(roster2) && Inventory::revision() == rev, "an identical snapshot doesn't bump the revision");
+  Inventory::checkIn("100002", "4A", "Gia", "");         // local change: the next snapshot must still apply
+  expect(Inventory::applySnapshot(roster2) && Inventory::revision() == rev + 2, "a snapshot after a local change is applied");
+  tap("Log Out");
+  tap("4");
+  auto dds2 = visibleDropdowns();
+  expect(dds2.size() == 2, "Sign On is back");
+  pick(dds2[0], "Zed");                              // only there if Sign On refreshed on show
+
+  lv_mem_monitor_t mem;                            // LVGL heap: 1 MB of PSRAM on the board
   lv_mem_monitor(&mem);
   printf("\nLVGL memory: %lu KB used at most, of %lu KB\n", (unsigned long)(mem.max_used / 1024),
          (unsigned long)(mem.total_size / 1024));
