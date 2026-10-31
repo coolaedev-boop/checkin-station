@@ -60,10 +60,12 @@ bool parseSnapshot(const String& json) {
   }
 
   {
+    // Swap, so the old data ends up in the locals and is freed after the lock is released;
+    // freeing a big item list while holding it would stall the UI's getters.
     std::lock_guard<std::mutex> lock(g_mutex);
-    g_roster   = std::move(roster);
-    g_projects = std::move(projects);
-    g_items    = std::move(items);
+    g_roster.swap(roster);
+    g_projects.swap(projects);
+    g_items.swap(items);
   }
   g_snapshotRev = ++g_revision;
   return true;
@@ -146,22 +148,6 @@ bool Inventory::findItem(const std::string& barcode, Item& out) {
   if (!it) return false;
   out = *it;
   return true;
-}
-
-std::vector<Item> Inventory::availableItems() {
-  std::lock_guard<std::mutex> lock(g_mutex);
-  std::vector<Item> out;
-  for (const Item& it : g_items)
-    if (!it.checkedOut) out.push_back(it);
-  return out;
-}
-
-std::vector<Item> Inventory::checkedOutItems() {
-  std::lock_guard<std::mutex> lock(g_mutex);
-  std::vector<Item> out;
-  for (const Item& it : g_items)
-    if (it.checkedOut) out.push_back(it);
-  return out;
 }
 
 bool Inventory::checkIn(const std::string& barcode, const std::string& className, const std::string& person,
