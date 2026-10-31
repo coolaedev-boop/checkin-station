@@ -7,6 +7,7 @@
 #include <HTTPClient.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <algorithm>
 #include <atomic>
 #include <deque>
 #include <mutex>
@@ -16,6 +17,7 @@ namespace {
 constexpr size_t   MAX_PENDING        = 200;     // oldest events drop past this (about 40 KB)
 constexpr uint32_t HTTP_TIMEOUT_MS    = 15000;
 constexpr uint32_t SYNC_FAIL_RETRY_MS = 30000;   // wait after a failed sync
+constexpr uint32_t METRICS_BUSY_INTERVAL_MS = 5 * 60 * 1000;   // telemetry pace while events are queued
 
 std::mutex            g_mutex;
 std::deque<String>    g_pending;                 // JSON bodies waiting to upload
@@ -234,9 +236,11 @@ void netTask(void*) {
 
     // 2) Upload queued events first, oldest first, one per pass.
     //    An event only leaves the queue once Sheets confirms it (or rejects it for good).
+    //    Only copy the front event when an upload is actually due; otherwise just ask if the queue is empty.
+    const bool uploadDue = elapsed(now, uploadFrom, uploadWaitMs);
     String body;
-    const bool hasPending = peekPending(body);
-    if (hasPending && elapsed(now, uploadFrom, uploadWaitMs)) {
+    const bool hasPending = uploadDue ? peekPending(body) : !queueEmpty();
+    if (hasPending && uploadDue) {
       const ScriptReply reply = callScript("POST", SCRIPT_URL, body);
       setReply(reply);
       uploadFrom = millis();
@@ -264,8 +268,10 @@ void netTask(void*) {
       else                                        syncWaitMs = SYNC_FAIL_RETRY_MS;
     }
 
-    // 4) Telemetry
-    if (elapsed(millis(), metricsFrom, metricsWaitMs)) {
+    // 4) Telemetry. A metrics POST is a whole TLS handshake that would delay the events
+    //    waiting in the queue, so while any are pending it goes out at most every 5 minutes.
+    const uint32_t metricsDueMs = hasPending ? std::max(metricsWaitMs, METRICS_BUSY_INTERVAL_MS) : metricsWaitMs;
+    if (elapsed(millis(), metricsFrom, metricsDueMs)) {
       metricsFrom   = millis();
       metricsWaitMs = METRICS_INTERVAL_MS;
       pushMetrics();
@@ -306,10 +312,12 @@ void Cloud::sendEvent(const char* action, const std::string& barcode,
 void Cloud::requestSync() { g_syncRequested = true; }
 
 CloudStatus Cloud::status() {
+  const bool connected = WiFi.isConnected();      // ask the Wi-Fi driver before taking the lock, not while holding it
+  const int  rssi      = connected ? WiFi.RSSI() : 0;
   std::lock_guard<std::mutex> lock(g_mutex);
   CloudStatus s     = g_status;
-  s.wifiConnected   = WiFi.isConnected();
-  s.wifiRssi        = s.wifiConnected ? WiFi.RSSI() : 0;
+  s.wifiConnected   = connected;
+  s.wifiRssi        = rssi;
   s.pendingEvents   = static_cast<uint32_t>(g_pending.size());
   s.lastSyncAgoSec  = g_everSynced ? (millis() - g_lastSyncMs) / 1000 : UINT32_MAX;
   return s;
