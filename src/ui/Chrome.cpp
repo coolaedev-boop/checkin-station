@@ -19,6 +19,7 @@ lv_obj_t*   g_lblClass = nullptr;
 lv_obj_t*   g_lblProject = nullptr;
 lv_obj_t*   g_tagline = nullptr;
 lv_obj_t*   g_status[3] = {};          // Bluetooth, Wi-Fi, server text
+int8_t      g_okShown[3] = {-1, -1, -1};   // colour last applied to each (-1: none yet)
 lv_obj_t*   g_nav = nullptr;
 lv_obj_t*   g_navIn = nullptr;
 lv_obj_t*   g_navOut = nullptr;
@@ -223,7 +224,10 @@ void refreshStatus() {
 
   for (int i = 0; i < 3; ++i) {
     setTextIfChanged(g_status[i], text[i]);
-    lv_obj_set_style_text_color(g_status[i], color(ok[i] ? BLACK : PANEL_RED), 0);
+    if (g_okShown[i] != ok[i]) {                         // restyling invalidates the label, so only on a change
+      g_okShown[i] = ok[i];
+      lv_obj_set_style_text_color(g_status[i], color(ok[i] ? BLACK : PANEL_RED), 0);
+    }
   }
 }
 
