@@ -20,6 +20,7 @@ std::vector<std::string> g_projects;
 std::vector<Item>        g_items;
 std::atomic<uint32_t>    g_revision{0};
 uint32_t                 g_cacheCrc = 0;
+uint32_t                 g_snapshotRev = UINT32_MAX;  // g_revision right after the last parse; differs once check-ins/outs change data
 
 uint32_t crcOf(const String& s) {
   return esp_rom_crc32_le(0, reinterpret_cast<const uint8_t*>(s.c_str()), s.length());
@@ -64,7 +65,7 @@ bool parseSnapshot(const String& json) {
     g_projects = std::move(projects);
     g_items    = std::move(items);
   }
-  ++g_revision;
+  g_snapshotRev = ++g_revision;
   return true;
 }
 
@@ -111,6 +112,10 @@ void Inventory::begin() {
 }
 
 bool Inventory::applySnapshot(const String& json) {
+  // Same bytes as the cache and nothing changed locally since: skip the parse and the
+  // revision bump, so the UI doesn't redraw every 5 minutes for no reason. A local check-in
+  // or check-out moves the revision, so a snapshot after one is still parsed and corrects it.
+  if (g_cacheCrc != 0 && g_revision.load() == g_snapshotRev && crcOf(json) == g_cacheCrc) return true;
   if (!parseSnapshot(json)) return false;
   saveCache(json);
   return true;
