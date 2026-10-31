@@ -22,6 +22,9 @@ lv_obj_t*                g_logIn = nullptr;
 std::vector<std::string> g_classes;                // what the chips show, in roster order
 std::vector<lv_obj_t*>   g_chipButtons;
 std::string              g_class;                  // picked class, empty until one is tapped
+std::vector<std::string> g_namesShown;             // what the dropdowns hold now, to skip no-change rebuilds
+std::vector<std::string> g_projectsShown;
+bool                     g_namesSet = false, g_projectsSet = false;
 
 // Grey bar, flat against one screen edge and round at the other end.
 void bar(lv_obj_t* scr, int32_t x, int32_t y, int32_t w, bool flatLeft) {
@@ -59,8 +62,13 @@ void styleChips() {
 
 void fillNames(bool keepPick) {
   const std::vector<std::string> names = g_class.empty() ? std::vector<std::string>{} : Inventory::people(g_class);
-  if (keepPick) setOptionsKeepPick(g_name, "Select your name", names);
-  else          lv_dropdown_set_options(g_name, optionsText("Select your name", names).c_str());
+  // A sync that didn't touch this list shouldn't rebuild the dropdown (it invalidates it).
+  if (!(keepPick && g_namesSet && names == g_namesShown)) {
+    if (keepPick) setOptionsKeepPick(g_name, "Select your name", names);
+    else          lv_dropdown_set_options(g_name, optionsText("Select your name", names).c_str());
+    g_namesShown = names;
+    g_namesSet   = true;
+  }
   setEnabled(g_name, !g_class.empty());
 }
 
@@ -137,12 +145,18 @@ void onLogIn(lv_event_t*) {
 
 void fillProjects(bool keepPick) {
   const std::vector<std::string> projects = Inventory::projects();
+  const bool unchanged = keepPick && g_projectsSet && projects == g_projectsShown;
+  if (!unchanged) {
+    g_projectsShown = projects;
+    g_projectsSet   = true;
+  }
   if (projects.empty()) {                                 // no Projects tab yet: not needed to sign on
-    lv_dropdown_set_options(g_project, "No projects in the Sheet");
+    if (!unchanged) lv_dropdown_set_options(g_project, "No projects in the Sheet");
     setEnabled(g_project, false);
     return;
   }
   setEnabled(g_project, true);
+  if (unchanged) return;
   if (keepPick) setOptionsKeepPick(g_project, "Select a project", projects);
   else          lv_dropdown_set_options(g_project, optionsText("Select a project", projects).c_str());
 }

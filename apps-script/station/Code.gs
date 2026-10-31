@@ -70,21 +70,22 @@ function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 
-function readItems_() {
+// withUpdated: also read the Updated column as real dates (a second call). The snapshot
+// doesn't need it, only the dashboard does.
+function readItems_(withUpdated) {
   const sh = sheet_('items');
   const last = sh.getLastRow();
   if (last < 2) return [];
-  const text = sh.getRange(2, 1, last - 1, 4).getDisplayValues();
-  const updated = sh.getRange(2, 5, last - 1, 1).getValues();
-  const desc = sh.getRange(2, 6, last - 1, 1).getDisplayValues();
+  const text = sh.getRange(2, 1, last - 1, 6).getDisplayValues();
+  const updated = withUpdated ? sh.getRange(2, 5, last - 1, 1).getValues() : null;
   return text
     .map((r, i) => ({
       barcode: r[0].trim(),
       name: r[1].trim() || 'Unnamed item',
       out: r[2].trim().toLowerCase() === 'out',
       holder: r[3].trim(),
-      updated: updated[i][0] instanceof Date ? updated[i][0].toISOString() : '',
-      desc: desc[i][0].trim(),
+      updated: updated && updated[i][0] instanceof Date ? updated[i][0].toISOString() : '',
+      desc: r[5].trim(),
     }))
     .filter(it => it.barcode);
 }
@@ -163,7 +164,8 @@ function recordEvent_(d) {
   const holder = isOut ? `${d.person} (${d.class})` : '';
 
   const items = sheet_('items');
-  const codes = rows_('items').map(r => r[0].trim());
+  const last = items.getLastRow();                   // only the Barcode column: that's all the lookup needs
+  const codes = last < 2 ? [] : items.getRange(2, 1, last - 1, 1).getDisplayValues().map(r => r[0].trim());
   const idx = codes.indexOf(barcode);
   let name = 'Unknown item';
   if (idx >= 0) {
@@ -186,7 +188,7 @@ function recordMetrics_(d) {
 // ---------- Dashboard data (fetched by the school dashboard script) --------------
 
 function dashboardData_() {
-  const items = readItems_();
+  const items = readItems_(true);
   const out = items.filter(it => it.out).sort((a, b) => (b.updated > a.updated ? 1 : -1));
 
   const logSheet = sheet_('log');

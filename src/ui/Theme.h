@@ -88,9 +88,11 @@ void breadcrumb(lv_obj_t* parent, const lv_image_dsc_t* icon, const char* page, 
 struct ImageFrame {
   lv_obj_t* img         = nullptr;
   lv_obj_t* placeholder = nullptr;
+  std::string shown;           // file last handed to LVGL, so an unchanged redraw skips the disk check
+  bool        hasPhoto = false;
 };
 ImageFrame imageFrame(lv_obj_t* parent);
-void       showItemImage(const ImageFrame& f, const std::string& barcode, bool known);
+void       showItemImage(ImageFrame& f, const std::string& barcode, bool known);
 void       clearItemImage(const ImageFrame& f);
 
 // Dark rounded dropdown with the design's chevron. Option 0 is the placeholder.

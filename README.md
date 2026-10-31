@@ -61,8 +61,6 @@ std::vector<std::string> Inventory::classes();
 std::vector<std::string> Inventory::people(const std::string& className);
 std::vector<std::string> Inventory::projects();         // empty if the Sheet has no Projects tab
 bool Inventory::findItem(const std::string& barcode, Item& out);
-std::vector<Item> Inventory::availableItems();         // checked in
-std::vector<Item> Inventory::checkedOutItems();
 bool Inventory::checkIn(const std::string& barcode, const std::string& cls, const std::string& person,
                         const std::string& project);
 bool Inventory::checkOut(const std::string& barcode, const std::string& cls, const std::string& person,

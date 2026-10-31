@@ -27,8 +27,6 @@ namespace Inventory {
   std::vector<std::string> people(const std::string& className);
   std::vector<std::string> projects();                   // from the Projects tab; empty if there isn't one
   bool                     findItem(const std::string& barcode, Item& out);
-  std::vector<Item>        availableItems();             // checked in, so they can be checked out
-  std::vector<Item>        checkedOutItems();
 
   // Update local state right away and queue the event for upload to Sheets.
   // checkOut() returns false if the item is unknown or already out.

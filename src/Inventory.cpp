@@ -20,6 +20,7 @@ std::vector<std::string> g_projects;
 std::vector<Item>        g_items;
 std::atomic<uint32_t>    g_revision{0};
 uint32_t                 g_cacheCrc = 0;
+uint32_t                 g_snapshotRev = UINT32_MAX;  // g_revision right after the last parse; differs once check-ins/outs change data
 
 uint32_t crcOf(const String& s) {
   return esp_rom_crc32_le(0, reinterpret_cast<const uint8_t*>(s.c_str()), s.length());
@@ -59,12 +60,14 @@ bool parseSnapshot(const String& json) {
   }
 
   {
+    // Swap, so the old data ends up in the locals and is freed after the lock is released;
+    // freeing a big item list while holding it would stall the UI's getters.
     std::lock_guard<std::mutex> lock(g_mutex);
-    g_roster   = std::move(roster);
-    g_projects = std::move(projects);
-    g_items    = std::move(items);
+    g_roster.swap(roster);
+    g_projects.swap(projects);
+    g_items.swap(items);
   }
-  ++g_revision;
+  g_snapshotRev = ++g_revision;
   return true;
 }
 
@@ -111,6 +114,10 @@ void Inventory::begin() {
 }
 
 bool Inventory::applySnapshot(const String& json) {
+  // Same bytes as the cache and nothing changed locally since: skip the parse and the
+  // revision bump, so the UI doesn't redraw every 5 minutes for no reason. A local check-in
+  // or check-out moves the revision, so a snapshot after one is still parsed and corrects it.
+  if (g_cacheCrc != 0 && g_revision.load() == g_snapshotRev && crcOf(json) == g_cacheCrc) return true;
   if (!parseSnapshot(json)) return false;
   saveCache(json);
   return true;
@@ -141,22 +148,6 @@ bool Inventory::findItem(const std::string& barcode, Item& out) {
   if (!it) return false;
   out = *it;
   return true;
-}
-
-std::vector<Item> Inventory::availableItems() {
-  std::lock_guard<std::mutex> lock(g_mutex);
-  std::vector<Item> out;
-  for (const Item& it : g_items)
-    if (!it.checkedOut) out.push_back(it);
-  return out;
-}
-
-std::vector<Item> Inventory::checkedOutItems() {
-  std::lock_guard<std::mutex> lock(g_mutex);
-  std::vector<Item> out;
-  for (const Item& it : g_items)
-    if (it.checkedOut) out.push_back(it);
-  return out;
 }
 
 bool Inventory::checkIn(const std::string& barcode, const std::string& className, const std::string& person,

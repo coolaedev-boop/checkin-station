@@ -145,17 +145,16 @@ ImageFrame imageFrame(lv_obj_t* parent) {
   return f;
 }
 
-void showItemImage(const ImageFrame& f, const std::string& barcode, bool known) {
+void showItemImage(ImageFrame& f, const std::string& barcode, bool known) {
   const std::string file = known ? "/items/" + barcode + ".jpg" : "/items/unknown_item.jpg";
-  if (LittleFS.exists(file.c_str())) {
-    lv_image_set_src(f.img, ("L:" + file).c_str());
-    setVisible(f.img, true);
-    setVisible(f.placeholder, false);
-  } else {
-    lv_label_set_text(f.placeholder, known ? "No photo" : "Unknown item");
-    setVisible(f.img, false);
-    setVisible(f.placeholder, true);
+  if (file != f.shown) {                                         // same path: nothing on disk or in LVGL changed
+    f.shown    = file;
+    f.hasPhoto = LittleFS.exists(file.c_str());
+    if (f.hasPhoto) lv_image_set_src(f.img, ("L:" + file).c_str());
+    else lv_label_set_text(f.placeholder, known ? "No photo" : "Unknown item");
   }
+  setVisible(f.img, f.hasPhoto);
+  setVisible(f.placeholder, !f.hasPhoto);
 }
 
 void clearItemImage(const ImageFrame& f) {

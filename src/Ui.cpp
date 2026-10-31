@@ -27,12 +27,28 @@ bool        g_unlocked = false;           // PIN entered; forgotten when Setting
 std::string g_heldScan;                   // scanned before anyone signed on
 lv_obj_t*   g_confirm = nullptr;          // "empty the cart?" box while it's open
 
+// Screens that show inventory data are only redrawn while visible; a change that lands
+// while one is hidden marks it stale and Nav::go catches it up when it's shown.
+bool g_stale[SCREEN_COUNT] = {};
+
 uint32_t g_seenInventoryRev = UINT32_MAX;
 uint32_t g_seenFoundRev     = UINT32_MAX;
 uint32_t g_seenNetworksRev  = UINT32_MAX;
 
 bool isSettingsPage(ScreenId id) {
   return id == ScreenId::Pin || id == ScreenId::Settings || id == ScreenId::Bluetooth || id == ScreenId::Wifi;
+}
+
+void refreshIfStale(ScreenId id) {
+  bool& stale = g_stale[static_cast<size_t>(id)];
+  if (!stale) return;
+  switch (id) {
+    case ScreenId::SignOn:   SignOnScreen::refresh(); break;
+    case ScreenId::CheckIn:  CheckInScreen::refresh(); break;
+    case ScreenId::CheckOut: CheckOutScreen::refresh(); break;
+    default: break;
+  }
+  stale = false;
 }
 
 void everySecond(lv_timer_t*) {
@@ -87,6 +103,7 @@ void Nav::go(ScreenId id) {
   for (size_t i = 0; i < SCREEN_COUNT; ++i) Theme::setVisible(g_screens[i], i == static_cast<size_t>(id));
   g_current = id;
   Chrome::layout(id);
+  refreshIfStale(id);                                    // inventory changed while this screen was hidden
   switch (id) {
     case ScreenId::CheckIn:   CheckInScreen::onShow(); break;
     case ScreenId::CheckOut:  CheckOutScreen::onShow(); break;
@@ -185,21 +202,21 @@ void Ui::update() {
   const uint32_t invRev = Inventory::revision();
   if (invRev != g_seenInventoryRev) {                    // data changed (sync, check-in, check-out)
     g_seenInventoryRev = invRev;
-    const size_t dropped = Session::pruneCart();
-    SignOnScreen::refresh();
-    CheckInScreen::refresh();
-    CheckOutScreen::refresh();
+    const size_t dropped = Session::pruneCart();          // session data, not a screen: always runs
+    for (bool& s : g_stale) s = true;
+    refreshIfStale(g_current);                            // hidden screens catch up in Nav::go
     if (dropped) Chrome::toast(Theme::itemCount(dropped) + " left the cart: the Sheet says checked out", true);
   }
 
   const uint32_t foundRev = Scanner::foundRevision();
   if (foundRev != g_seenFoundRev) {                      // a scanner search finished
-    g_seenFoundRev = foundRev;
-    if (foundRev > 0) BluetoothScreen::refreshList();
+    g_seenFoundRev = foundRev;                           // a hidden page rebuilds in its onShow instead
+    if (foundRev > 0 && g_current == ScreenId::Bluetooth) BluetoothScreen::refreshList();
   }
 
   const uint32_t netRev = Network::networksRevision();
-  if (netRev != g_seenNetworksRev && WifiScreen::refreshList()) {   // a Wi-Fi search finished
-    g_seenNetworksRev = netRev;                                      // (retried next pass if a finger was down)
+  if (netRev != g_seenNetworksRev) {                     // a Wi-Fi search finished
+    if (g_current != ScreenId::Wifi) g_seenNetworksRev = netRev;   // hidden: onShow rescans and rebuilds
+    else if (WifiScreen::refreshList()) g_seenNetworksRev = netRev; // (retried next pass if a finger was down)
   }
 }

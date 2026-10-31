@@ -20,6 +20,8 @@ lv_obj_t*   g_list = nullptr;
 lv_obj_t*   g_checkOut = nullptr;
 ImageFrame  g_frame;
 std::string g_preview;               // barcode shown in the image well
+std::vector<std::string> g_builtRows;   // "barcode|name" per row currently in the list
+bool        g_rowsBuilt = false;     // false until the first build, so the empty-cart hint appears
 
 void rebuild();
 
@@ -76,10 +78,23 @@ void onCheckOut(lv_event_t*) {
 
 void rebuild() {
   const std::vector<std::string>& cart = Session::cart();
+  // What each row would show (barcode + name). Same as last time: keep the rows, so the
+  // list doesn't flicker or lose its scroll position, and only refresh the preview/button.
+  std::vector<std::string> wanted;
+  std::vector<std::string> names;
+  for (const std::string& code : cart) {
+    Item item;
+    names.push_back(Inventory::findItem(code, item) ? item.name : code);
+    wanted.push_back(code + "|" + names.back());
+  }
+  if (g_rowsBuilt && wanted == g_builtRows) {
+    showPreview();
+    return;
+  }
+  g_rowsBuilt = true;
+  g_builtRows = wanted;
   lv_obj_clean(g_list);
   for (size_t i = 0; i < cart.size(); ++i) {
-    Item item;
-    const bool known = Inventory::findItem(cart[i], item);
     lv_obj_t* row = lv_button_create(g_list);
     lv_obj_remove_style_all(row);
     lv_obj_set_size(row, CARD_W, ROW_H);
@@ -88,7 +103,7 @@ void rebuild() {
     lv_obj_set_style_border_width(row, 1, 0);
     lv_obj_set_style_border_color(row, color(PANEL_RED), 0);
     lv_obj_add_event_cb(row, onRow, LV_EVENT_CLICKED, reinterpret_cast<void*>(i));
-    textBox(row, known ? item.name.c_str() : cart[i].c_str(), F_BODY, WHITE, 17, 6, 186, LV_LABEL_LONG_DOT);
+    textBox(row, names[i].c_str(), F_BODY, WHITE, 17, 6, 186, LV_LABEL_LONG_DOT);
     pill(row, "Remove", CARD_W - 74, 4, 66, 22, DEEP_RED, F_SMALL, onRemove, reinterpret_cast<void*>(i));
   }
   if (cart.empty()) {
