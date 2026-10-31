@@ -161,13 +161,13 @@
           </li>`).join('')
       : `<li class="empty">${q ? 'Nothing out matches that search.' : 'Nothing is out right now.'}</li>`;
 
-    const recentRows = data.recent.filter(r => matches(q, r.item, r.person, r.cls, r.barcode));
+    const recentRows = data.recent.filter(r => matches(q, r.item, r.person, r.cls, r.project, r.barcode));
     $('recent').innerHTML = recentRows.length
       ? recentRows.map(r => `
           <li class="row">
             <span class="when">${esc(clock(r.time))}</span>
             <span class="what">${esc(r.person || 'Someone')} ${r.action === 'checkout' ? 'checked out' : 'checked in'} ${esc(r.item)}</span>
-            <span class="cls">${esc(r.cls)}</span>
+            <span class="cls">${esc([r.cls, r.project].filter(Boolean).join(' · '))}</span>
           </li>`).join('')
       : `<li class="empty">${q ? 'No activity matches that search.' : 'Scans will show up here.'}</li>`;
 

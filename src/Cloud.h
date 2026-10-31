@@ -37,7 +37,7 @@ namespace Cloud {
 
   // Queue a check-in/out for upload. Never blocks; safe to call from the UI.
   void sendEvent(const char* action, const std::string& barcode,
-                 const std::string& className, const std::string& person);
+                 const std::string& className, const std::string& person, const std::string& project);
 
   void        requestSync(); // pull fresh roster + items as soon as possible
   CloudStatus status();

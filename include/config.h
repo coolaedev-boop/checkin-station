@@ -13,7 +13,7 @@
 // System tab will say "needs public deployment".
 constexpr const char* WIFI_SSID  = "Guest";          // 2.4 GHz only
 constexpr const char* WIFI_PASS  = "";
-constexpr const char* SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwF5KFPHNB6SFxTc85XYyphoPIbN-hRJtV7aeuvit7ZScbYaUgjaNbEEPGHsj4i7o_K/exec";
+constexpr const char* SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz0VMBOri-BbVOLhVXrL0trRXl6px5YqeryKF8keOPsjdtXQdvFnxs_dqsfPRsQQVFj/exec";
 constexpr const char* API_TOKEN  = "jdiwnu8329rejdowhe92ueiowpqu9e01ue89yru23yy46782ryeho2u8y7382yr7ewy";  // must match TOKEN in Code.gs
 
 // ---- Timing -----------------------------------------------------------------
@@ -25,6 +25,11 @@ constexpr uint32_t WIFI_RETRY_MS         = 10 * 1000;      // reconnect attempts
 constexpr uint32_t WIFI_JOIN_TIMEOUT_MS  = 15 * 1000;      // give up on one try at joining a network
 constexpr uint32_t SCANNER_RETRY_MS      = 10 * 1000;      // reconnect attempts to the saved scanner
 constexpr uint32_t DISCOVERY_DURATION_MS = 5 * 1000;       // how long "Find scanners" searches
+constexpr uint32_t SESSION_IDLE_MS       = 3 * 60 * 1000;  // sign out after this long with no touch or scan
+
+// ---- Settings PIN -----------------------------------------------------------
+// 6 digits. Settings (scanner, Wi-Fi, sync) asks for it every time it's opened.
+constexpr const char* SETTINGS_PIN = "000000";
 
 // ---- Display: ST7796S over SPI (match your wiring) ---------------------------
 constexpr int PIN_TFT_SCLK = 12;

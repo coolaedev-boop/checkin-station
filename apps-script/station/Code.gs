@@ -6,14 +6,15 @@
 //  dashboard script (apps-script/dashboard/Code.gs, on your school account).
 //
 //  API (every call needs a token)
-//    GET  ?action=snapshot&token=TOKEN              -> roster + items (ESP32)
+//    GET  ?action=snapshot&token=TOKEN              -> roster + projects + items (ESP32)
 //    GET  ?action=dashboard&token=DASHBOARD_TOKEN   -> dashboard data (school dashboard script)
-//    POST {type:"event", action:"checkin"|"checkout", barcode, class, person, token}
+//    POST {type:"event", action:"checkin"|"checkout", barcode, class, person, project, token}
 //    POST {type:"metrics", ...chip health..., token}
 //  Browser
 //    GET  (no params)  -> a one-line page. The dashboard itself lives on the school account.
 //
-//  First time: run setup() once from the editor to create the tabs.
+//  First time: run setup() once from the editor to create the tabs. Run it again
+//  after updating this script: it adds new tabs and columns and keeps your data.
 //  After ANY edit: Deploy > Manage deployments > edit > New version > Deploy.
 // ============================================================================
 
@@ -21,9 +22,10 @@ const TOKEN           = 'change-me-to-a-long-random-string';   // must match API
 const DASHBOARD_TOKEN = 'change-me-to-a-different-long-string'; // must match DASHBOARD_TOKEN in the dashboard script
 
 const TABS = {
-  items:   { name: 'Items',   headers: ['Barcode', 'Name', 'Status', 'Holder', 'Updated'] },
-  roster:  { name: 'Roster',  headers: ['Class', 'Name'] },
-  log:     { name: 'Log',     headers: ['Timestamp', 'Action', 'Barcode', 'Item', 'Class', 'Person', 'Device'] },
+  items:    { name: 'Items',    headers: ['Barcode', 'Name', 'Status', 'Holder', 'Updated', 'Description'] },
+  roster:   { name: 'Roster',   headers: ['Class', 'Name'] },
+  projects: { name: 'Projects', headers: ['Project'] },
+  log:      { name: 'Log',      headers: ['Timestamp', 'Action', 'Barcode', 'Item', 'Class', 'Person', 'Device', 'Project'] },
   metrics: { name: 'Metrics', headers: ['Timestamp', 'device', 'uptime_s', 'heap_free', 'heap_min', 'heap_max_alloc',
                                         'heap_total', 'psram_free', 'psram_total', 'temp_c', 'rssi', 'cpu_mhz',
                                         'reset_reason', 'pending'] },
@@ -32,7 +34,7 @@ const TABS = {
 // ---------- Setup + helpers ----------------------------------------------------
 
 function setup() {
-  Object.keys(TABS).forEach(key => sheet_(key));
+  Object.keys(TABS).forEach(key => addMissingHeaders_(sheet_(key), TABS[key].headers));
   // Barcodes are text: stops Sheets from turning 012345 into 12345
   sheet_('items').getRange('A:A').setNumberFormat('@');
   sheet_('log').getRange('C:C').setNumberFormat('@');
@@ -50,6 +52,13 @@ function sheet_(key) {
   return sh;
 }
 
+// Tabs made by an older version of this script are missing the newer columns
+// (Description, Project). Add their headers after the existing ones.
+function addMissingHeaders_(sh, headers) {
+  const have = sh.getRange(1, 1, 1, headers.length).getDisplayValues()[0];
+  headers.forEach((h, i) => { if (!have[i]) sh.getRange(1, i + 1).setValue(h); });
+}
+
 function rows_(key) {                       // data rows as display text, header skipped
   const sh = sheet_(key);
   const last = sh.getLastRow();
@@ -61,19 +70,22 @@ function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 
-function readItems_() {
+// withUpdated: also read the Updated column as real dates (a second call). The snapshot
+// doesn't need it, only the dashboard does.
+function readItems_(withUpdated) {
   const sh = sheet_('items');
   const last = sh.getLastRow();
   if (last < 2) return [];
-  const text = sh.getRange(2, 1, last - 1, 4).getDisplayValues();
-  const updated = sh.getRange(2, 5, last - 1, 1).getValues();
+  const text = sh.getRange(2, 1, last - 1, 6).getDisplayValues();
+  const updated = withUpdated ? sh.getRange(2, 5, last - 1, 1).getValues() : null;
   return text
     .map((r, i) => ({
       barcode: r[0].trim(),
       name: r[1].trim() || 'Unnamed item',
       out: r[2].trim().toLowerCase() === 'out',
       holder: r[3].trim(),
-      updated: updated[i][0] instanceof Date ? updated[i][0].toISOString() : '',
+      updated: updated && updated[i][0] instanceof Date ? updated[i][0].toISOString() : '',
+      desc: r[5].trim(),
     }))
     .filter(it => it.barcode);
 }
@@ -131,8 +143,18 @@ function snapshot_() {
   });
   return {
     roster: Array.from(byClass, ([cls, people]) => ({ class: cls, people })),
-    items: readItems_().map(({ barcode, name, out, holder }) => ({ barcode, name, out, holder })),
+    projects: readProjects_(),
+    items: readItems_().map(({ barcode, name, out, holder, desc }) => ({ barcode, name, out, holder, desc })),
   };
+}
+
+// Doesn't create the tab (setup() does), so a read never changes the spreadsheet.
+function readProjects_() {
+  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TABS.projects.name);
+  if (!sh || sh.getLastRow() < 2) return [];
+  return sh.getRange(2, 1, sh.getLastRow() - 1, 1).getDisplayValues()
+    .map(r => r[0].trim())
+    .filter(Boolean);
 }
 
 function recordEvent_(d) {
@@ -142,7 +164,8 @@ function recordEvent_(d) {
   const holder = isOut ? `${d.person} (${d.class})` : '';
 
   const items = sheet_('items');
-  const codes = rows_('items').map(r => r[0].trim());
+  const last = items.getLastRow();                   // only the Barcode column: that's all the lookup needs
+  const codes = last < 2 ? [] : items.getRange(2, 1, last - 1, 1).getDisplayValues().map(r => r[0].trim());
   const idx = codes.indexOf(barcode);
   let name = 'Unknown item';
   if (idx >= 0) {
@@ -153,7 +176,8 @@ function recordEvent_(d) {
     items.appendRow([barcode, name, isOut ? 'Out' : 'In', holder, when]);   // rename it in the sheet later
   }
 
-  sheet_('log').appendRow([when, d.action, barcode, name, d.class || '', d.person || '', d.device || '']);
+  sheet_('log').appendRow([when, d.action, barcode, name, d.class || '', d.person || '', d.device || '',
+                           d.project || '']);
 }
 
 function recordMetrics_(d) {
@@ -164,7 +188,7 @@ function recordMetrics_(d) {
 // ---------- Dashboard data (fetched by the school dashboard script) --------------
 
 function dashboardData_() {
-  const items = readItems_();
+  const items = readItems_(true);
   const out = items.filter(it => it.out).sort((a, b) => (b.updated > a.updated ? 1 : -1));
 
   const logSheet = sheet_('log');
@@ -174,10 +198,10 @@ function dashboardData_() {
     const n = Math.min(30, logLast - 1);
     const start = logLast - n + 1;
     const times = logSheet.getRange(start, 1, n, 1).getValues();
-    const text = logSheet.getRange(start, 2, n, 5).getDisplayValues();
+    const text = logSheet.getRange(start, 2, n, 7).getDisplayValues();
     recent = text.map((r, i) => ({
       time: times[i][0] instanceof Date ? times[i][0].toISOString() : '',
-      action: r[0], barcode: r[1], item: r[2], cls: r[3], person: r[4],
+      action: r[0], barcode: r[1], item: r[2], cls: r[3], person: r[4], project: r[6],
     })).reverse();
   }
 

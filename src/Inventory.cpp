@@ -16,17 +16,20 @@ constexpr const char* CACHE_PATH = "/inventory.json";
 
 std::mutex               g_mutex;
 std::vector<RosterClass> g_roster;
+std::vector<std::string> g_projects;
 std::vector<Item>        g_items;
 std::atomic<uint32_t>    g_revision{0};
 uint32_t                 g_cacheCrc = 0;
+uint32_t                 g_snapshotRev = UINT32_MAX;  // g_revision right after the last parse; differs once check-ins/outs change data
 
 uint32_t crcOf(const String& s) {
   return esp_rom_crc32_le(0, reinterpret_cast<const uint8_t*>(s.c_str()), s.length());
 }
 
 // Parse a snapshot from Apps Script:
-// {"ok":true,"roster":[{"class":"Period 1","people":["Ava"]}],
-//  "items":[{"barcode":"0123","name":"TI-84 #1","out":false,"holder":""}]}
+// {"ok":true,"roster":[{"class":"Period 1","people":["Ava"]}],"projects":["Film Club"],
+//  "items":[{"barcode":"0123","name":"TI-84 #1","out":false,"holder":"","desc":"Calculator, TI-84 Plus"}]}
+// "projects" and "desc" are newer; a snapshot or cache without them still parses.
 bool parseSnapshot(const String& json) {
   JsonDocument doc;
   if (deserializeJson(doc, json) || !(doc["ok"] | false)) return false;
@@ -39,6 +42,12 @@ bool parseSnapshot(const String& json) {
     roster.push_back(std::move(rc));
   }
 
+  std::vector<std::string> projects;
+  for (JsonVariant p : doc["projects"].as<JsonArray>()) {
+    std::string name = p | "";
+    if (!name.empty()) projects.push_back(std::move(name));
+  }
+
   std::vector<Item> items;
   for (JsonObject it : doc["items"].as<JsonArray>()) {
     Item item;
@@ -46,15 +55,19 @@ bool parseSnapshot(const String& json) {
     item.name       = it["name"] | "";
     item.checkedOut = it["out"] | false;
     item.holder     = it["holder"] | "";
+    item.description = it["desc"] | "";
     if (!item.barcode.empty()) items.push_back(std::move(item));
   }
 
   {
+    // Swap, so the old data ends up in the locals and is freed after the lock is released;
+    // freeing a big item list while holding it would stall the UI's getters.
     std::lock_guard<std::mutex> lock(g_mutex);
-    g_roster = std::move(roster);
-    g_items  = std::move(items);
+    g_roster.swap(roster);
+    g_projects.swap(projects);
+    g_items.swap(items);
   }
-  ++g_revision;
+  g_snapshotRev = ++g_revision;
   return true;
 }
 
@@ -70,10 +83,11 @@ void saveCache(const String& json) {
 
 void loadDemoData() {
   std::lock_guard<std::mutex> lock(g_mutex);
-  g_roster = {{"Period 1", {"Ava", "Jordan", "Malik"}}, {"Period 2", {"Chris", "Dana"}}};
-  g_items  = {{"012345678905", "TI-84 #1", false, ""},
-              {"012345678912", "TI-84 #2", false, ""},
-              {"036000291452", "Chromebook 7", false, ""}};
+  g_roster   = {{"2A", {"Ava", "Jordan", "Malik"}}, {"2B", {"Chris", "Dana"}}};
+  g_projects = {"Morning Show", "Film Club"};
+  g_items    = {{"012345678905", "TI-84 #1", false, "", "Calculator, TI-84 Plus"},
+                {"012345678912", "TI-84 #2", false, "", "Calculator, TI-84 Plus"},
+                {"036000291452", "Chromebook 7", false, "", "Laptop, Lenovo 100e"}};
 }
 
 Item* findLocked(const std::string& barcode) {  // caller must hold g_mutex
@@ -100,6 +114,10 @@ void Inventory::begin() {
 }
 
 bool Inventory::applySnapshot(const String& json) {
+  // Same bytes as the cache and nothing changed locally since: skip the parse and the
+  // revision bump, so the UI doesn't redraw every 5 minutes for no reason. A local check-in
+  // or check-out moves the revision, so a snapshot after one is still parsed and corrects it.
+  if (g_cacheCrc != 0 && g_revision.load() == g_snapshotRev && crcOf(json) == g_cacheCrc) return true;
   if (!parseSnapshot(json)) return false;
   saveCache(json);
   return true;
@@ -119,6 +137,11 @@ std::vector<std::string> Inventory::people(const std::string& className) {
   return {};
 }
 
+std::vector<std::string> Inventory::projects() {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  return g_projects;
+}
+
 bool Inventory::findItem(const std::string& barcode, Item& out) {
   std::lock_guard<std::mutex> lock(g_mutex);
   const Item* it = findLocked(barcode);
@@ -127,38 +150,24 @@ bool Inventory::findItem(const std::string& barcode, Item& out) {
   return true;
 }
 
-std::vector<Item> Inventory::availableItems() {
-  std::lock_guard<std::mutex> lock(g_mutex);
-  std::vector<Item> out;
-  for (const Item& it : g_items)
-    if (!it.checkedOut) out.push_back(it);
-  return out;
-}
-
-std::vector<Item> Inventory::checkedOutItems() {
-  std::lock_guard<std::mutex> lock(g_mutex);
-  std::vector<Item> out;
-  for (const Item& it : g_items)
-    if (it.checkedOut) out.push_back(it);
-  return out;
-}
-
-bool Inventory::checkIn(const std::string& barcode, const std::string& className, const std::string& person) {
+bool Inventory::checkIn(const std::string& barcode, const std::string& className, const std::string& person,
+                        const std::string& project) {
   {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (Item* it = findLocked(barcode)) {
       it->checkedOut = false;
       it->holder.clear();
     } else {
-      g_items.push_back({barcode, "Unknown item", false, ""});  // Sheets adds it too; rename it there
+      g_items.push_back({barcode, "Unknown item", false, "", ""});  // Sheets adds it too; rename it there
     }
   }
   ++g_revision;
-  Cloud::sendEvent("checkin", barcode, className, person);
+  Cloud::sendEvent("checkin", barcode, className, person, project);
   return true;
 }
 
-bool Inventory::checkOut(const std::string& barcode, const std::string& className, const std::string& person) {
+bool Inventory::checkOut(const std::string& barcode, const std::string& className, const std::string& person,
+                         const std::string& project) {
   {
     std::lock_guard<std::mutex> lock(g_mutex);
     Item* it = findLocked(barcode);
@@ -167,7 +176,7 @@ bool Inventory::checkOut(const std::string& barcode, const std::string& classNam
     it->holder     = person + " (" + className + ")";
   }
   ++g_revision;
-  Cloud::sendEvent("checkout", barcode, className, person);
+  Cloud::sendEvent("checkout", barcode, className, person, project);
   return true;
 }
 
